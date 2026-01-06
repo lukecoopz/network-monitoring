@@ -266,6 +266,9 @@ class PiholeReader:
     def read_pihole_db(self):
         """Read queries from Pi-hole's SQLite database"""
         try:
+            if not self.pihole_db or not self.pihole_db.endswith('.db'):
+                return []
+            
             conn = sqlite3.connect(self.pihole_db, timeout=5.0)
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
@@ -278,27 +281,35 @@ class PiholeReader:
                 if not c.fetchone():
                     # Table might not exist or have different name
                     conn.close()
+                    print("Queries table not found in Pi-hole database")
                     return []
-            except:
+            except Exception as e:
+                print(f"Error checking for queries table: {e}")
                 conn.close()
                 return []
             
-            # Build query based on available columns
-            query = '''
-                SELECT timestamp, domain, client 
-                FROM queries 
-                WHERE timestamp > ?
-                ORDER BY timestamp ASC
-                LIMIT 1000
-            '''
-            
+            # Build query - get recent queries
             # Use epoch timestamp or last processed timestamp
             if self.last_timestamp:
+                query = '''
+                    SELECT timestamp, domain, client 
+                    FROM queries 
+                    WHERE timestamp > ? AND domain IS NOT NULL AND domain != '' AND client IS NOT NULL AND client != ''
+                    ORDER BY timestamp ASC
+                    LIMIT 1000
+                '''
                 c.execute(query, (self.last_timestamp,))
             else:
-                # First run - get queries from last hour
-                one_hour_ago = int(time.time()) - 3600
-                c.execute(query, (one_hour_ago,))
+                # First run - get queries from last 24 hours to populate initial data
+                one_day_ago = int(time.time()) - 86400
+                query = '''
+                    SELECT timestamp, domain, client 
+                    FROM queries 
+                    WHERE timestamp > ? AND domain IS NOT NULL AND domain != '' AND client IS NOT NULL AND client != ''
+                    ORDER BY timestamp ASC
+                    LIMIT 5000
+                '''
+                c.execute(query, (one_day_ago,))
             
             rows = c.fetchall()
             conn.close()
@@ -306,11 +317,25 @@ class PiholeReader:
             # Convert to list of tuples
             result = []
             for row in rows:
-                result.append((row['timestamp'], row['domain'], row['client']))
+                try:
+                    timestamp = row['timestamp']
+                    domain = row['domain']
+                    client = row['client']
+                    
+                    # Validate data
+                    if domain and client and timestamp:
+                        result.append((timestamp, domain, client))
+                except Exception as e:
+                    continue
+            
+            if result:
+                print(f"Read {len(result)} queries from Pi-hole database")
             
             return result
         except Exception as e:
             print(f"Error reading Pi-hole database: {e}")
+            import traceback
+            traceback.print_exc()
             # Try to get column names for debugging
             try:
                 conn = sqlite3.connect(self.pihole_db, timeout=5.0)
@@ -350,7 +375,12 @@ class PiholeReader:
     
     def process_queries(self, queries):
         """Process queries from Pi-hole"""
+        if not queries:
+            return
+        
         current_time = time.time()
+        processed_count = 0
+        skipped_count = 0
         
         for query in queries:
             try:
@@ -365,18 +395,42 @@ class PiholeReader:
                     
                     # Skip invalid domains
                     if not domain or '.' not in domain or domain.startswith('.'):
+                        skipped_count += 1
+                        continue
+                    
+                    # Skip local/private domains
+                    if domain.endswith('.local') or domain.endswith('.lan'):
+                        skipped_count += 1
+                        continue
+                    
+                    # Skip invalid client IPs
+                    if not client_ip or client_ip == '' or client_ip == 'unknown':
+                        skipped_count += 1
                         continue
                     
                     # Cache the query
                     with self.cache_lock:
                         self.query_cache[client_ip][domain] += 1
                     
+                    processed_count += 1
+                    
                     # Flush periodically
                     if current_time - self.last_flush > self.flush_interval:
                         self.flush_to_db()
                         self.last_flush = current_time
             except Exception as e:
+                skipped_count += 1
                 continue
+        
+        if processed_count > 0:
+            print(f"Processed {processed_count} queries (skipped {skipped_count} invalid)")
+        
+        # Always flush at the end if we processed queries
+        if processed_count > 0:
+            current_time = time.time()
+            if current_time - self.last_flush > 10:  # Flush if more than 10 seconds since last flush
+                self.flush_to_db()
+                self.last_flush = current_time
     
     def flush_to_db(self):
         """Flush cached queries to database"""
@@ -384,31 +438,46 @@ class PiholeReader:
             if not self.query_cache:
                 return
             
+            total_queries = sum(sum(domains.values()) for domains in self.query_cache.values())
+            if total_queries == 0:
+                return
+            
+            print(f"Flushing {total_queries} cached queries to database...")
+            
             conn = sqlite3.connect(self.db_file)
             c = conn.cursor()
             current_time = datetime.now().isoformat()
             
+            flushed_count = 0
+            
             for device_ip, domains in self.query_cache.items():
-                device_mac = self.get_device_mac(device_ip)
-                if not device_mac:
-                    # Try to create device entry if it doesn't exist
-                    device_mac = 'unknown'
-                    c.execute(
-                        '''INSERT OR IGNORE INTO devices (mac, ip, hostname, first_seen, last_seen, vendor)
-                           VALUES (?, ?, ?, ?, ?, ?)''',
-                        (device_mac, device_ip, 'Unknown', current_time, current_time, 'Unknown')
-                    )
-                
-                for domain, count in domains.items():
-                    # Insert or update DNS query
-                    c.execute(
-                        '''INSERT INTO dns_queries (device_mac, device_ip, domain, timestamp, count)
-                           VALUES (?, ?, ?, ?, ?)''',
-                        (device_mac, device_ip, domain, current_time, count)
-                    )
+                try:
+                    device_mac = self.get_device_mac(device_ip)
+                    if not device_mac:
+                        # Try to create device entry if it doesn't exist
+                        device_mac = f"pihole-{device_ip.replace('.', '-')}"
+                        c.execute(
+                            '''INSERT OR IGNORE INTO devices (mac, ip, hostname, first_seen, last_seen, vendor)
+                               VALUES (?, ?, ?, ?, ?, ?)''',
+                            (device_mac, device_ip, 'Unknown', current_time, current_time, 'Pi-hole Client')
+                        )
+                    
+                    for domain, count in domains.items():
+                        # Insert DNS query
+                        c.execute(
+                            '''INSERT INTO dns_queries (device_mac, device_ip, domain, timestamp, count)
+                               VALUES (?, ?, ?, ?, ?)''',
+                            (device_mac, device_ip, domain, current_time, count)
+                        )
+                        flushed_count += 1
+                except Exception as e:
+                    print(f"Error flushing queries for device {device_ip}: {e}")
+                    continue
             
             conn.commit()
             conn.close()
+            
+            print(f"Flushed {flushed_count} domain queries from {len(self.query_cache)} devices")
             
             # Clear cache
             self.query_cache.clear()
@@ -523,7 +592,12 @@ class PiholeReader:
                     
                     if queries:
                         self.process_queries(queries)
-                        print(f"Processed {len(queries)} queries from Pi-hole")
+                    else:
+                        # No new queries, but still flush any cached data
+                        current_time = time.time()
+                        if current_time - self.last_flush > self.flush_interval:
+                            self.flush_to_db()
+                            self.last_flush = current_time
                     
                     # Sync devices periodically (every 5 minutes)
                     if int(time.time()) % 300 < 5 and self.pihole_db.endswith('.db'):
@@ -533,6 +607,8 @@ class PiholeReader:
                     time.sleep(5)
                 except Exception as e:
                     print(f"Error reading Pi-hole queries: {e}")
+                    import traceback
+                    traceback.print_exc()
                     time.sleep(10)
         except KeyboardInterrupt:
             self.reading = False

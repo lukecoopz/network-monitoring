@@ -183,6 +183,48 @@ def get_logs():
     except Exception as e:
         return jsonify({'status': 'error', 'logs': f'Error getting logs: {str(e)}'}), 500
 
+@app.route('/api/debug/pihole', methods=['GET'])
+def debug_pihole():
+    """Debug endpoint to check Pi-hole status"""
+    try:
+        debug_info = {
+            'pihole_detected': pihole.pihole_db is not None,
+            'pihole_path': pihole.pihole_db,
+            'reading': pihole.reading,
+            'last_timestamp': pihole.last_timestamp,
+            'cached_queries': len(pihole.query_cache) if pihole.query_cache else 0
+        }
+        
+        # Try to get some stats from Pi-hole database
+        if pihole.pihole_db and pihole.pihole_db.endswith('.db'):
+            try:
+                import sqlite3
+                conn = sqlite3.connect(pihole.pihole_db, timeout=2.0)
+                c = conn.cursor()
+                
+                # Get total queries count
+                c.execute("SELECT COUNT(*) FROM queries WHERE timestamp > ?", (int(time.time()) - 86400,))
+                recent_queries = c.fetchone()[0]
+                debug_info['recent_queries_24h'] = recent_queries
+                
+                # Get unique clients
+                c.execute("SELECT COUNT(DISTINCT client) FROM queries WHERE client != '' AND client IS NOT NULL")
+                unique_clients = c.fetchone()[0]
+                debug_info['unique_clients'] = unique_clients
+                
+                # Get unique domains
+                c.execute("SELECT COUNT(DISTINCT domain) FROM queries WHERE domain != '' AND domain IS NOT NULL AND timestamp > ?", (int(time.time()) - 86400,))
+                unique_domains = c.fetchone()[0]
+                debug_info['unique_domains_24h'] = unique_domains
+                
+                conn.close()
+            except Exception as e:
+                debug_info['pihole_db_error'] = str(e)
+        
+        return jsonify(debug_info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/search', methods=['GET'])
 def search():
     """Search for devices and sites"""
