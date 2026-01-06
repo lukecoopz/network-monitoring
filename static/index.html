@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Monitoring Tool</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌐 Network Monitoring Tool</h1>
+            <div class="search-bar-container">
+                <input type="text" id="globalSearch" class="global-search-input" placeholder="🔍 Search devices, IPs, MACs, or sites...">
+                <button id="clearSearch" class="btn-clear" style="display: none;">✕</button>
+            </div>
+            <div class="stats-bar" id="statsBar">
+                <div class="stat-item">
+                    <span class="stat-label">Devices:</span>
+                    <span class="stat-value" id="deviceCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Total Queries:</span>
+                    <span class="stat-value" id="totalQueries">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Unique Domains:</span>
+                    <span class="stat-value" id="uniqueDomains">0</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <div class="controls">
+                <div class="filter-section">
+                    <label for="deviceFilter">Filter by Device:</label>
+                    <select id="deviceFilter" class="select-input">
+                        <option value="all">All Devices</option>
+                    </select>
+                </div>
+                <button id="refreshBtn" class="btn-primary">Refresh Data</button>
+            </div>
+
+            <div class="content-grid">
+                <div class="chart-section">
+                    <h2 id="chartTitle">Top Sites Visited (All Devices)</h2>
+                    <div class="chart-container">
+                        <canvas id="pieChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="table-section">
+                    <div class="table-header">
+                        <h2>Site Details</h2>
+                        <div class="table-controls">
+                            <input type="text" id="siteFilter" class="filter-input" placeholder="🔍 Filter by domain...">
+                            <select id="sortBy" class="select-input sort-select">
+                                <option value="visits">Sort by Visits</option>
+                                <option value="domain">Sort by Domain</option>
+                                <option value="timestamp">Sort by Last Visited</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="sitesTable">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Domain</th>
+                                    <th>Visits</th>
+                                    <th>Percentage</th>
+                                    <th>Last Visited</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sitesTableBody">
+                                <!-- Table rows will be populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="searchResults" class="search-results-section" style="display: none;">
+                <h2>Search Results</h2>
+                <div id="searchResultsContent">
+                    <!-- Search results will be populated by JavaScript -->
+                </div>
+            </div>
+
+            <div class="devices-section" id="devicesSection">
+                <h2>Discovered Devices</h2>
+                <div class="devices-grid" id="devicesGrid">
+                    <!-- Device cards will be populated by JavaScript -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
