@@ -64,6 +64,56 @@ class PiholeReader:
         except:
             return None
     
+    def _read_pihole_db_safe(self, query, params=None, max_retries=5):
+        """Safely read from Pi-hole database with retry logic and read-only mode"""
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                if not self.pihole_db or not self.pihole_db.endswith('.db'):
+                    return None
+                
+                # Use read-only mode to avoid locking issues with Pi-hole FTL
+                conn = sqlite3.connect(f"file:{self.pihole_db}?mode=ro", uri=True, timeout=2.0)
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                
+                if params:
+                    c.execute(query, params)
+                else:
+                    c.execute(query)
+                
+                rows = c.fetchall()
+                conn.close()
+                return rows
+                
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    if 'conn' in locals():
+                        try:
+                            conn.close()
+                        except:
+                            pass
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                    continue
+                else:
+                    if 'conn' in locals():
+                        try:
+                            conn.close()
+                        except:
+                            pass
+                    raise
+            except Exception as e:
+                if 'conn' in locals():
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                raise
+        
+        return None
+    
     def get_hostname(self, ip):
         """Get hostname for an IP address using multiple methods"""
         hostname = None
