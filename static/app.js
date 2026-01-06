@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set up event listeners
     document.getElementById('deviceFilter').addEventListener('change', handleDeviceFilter);
     document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+    document.getElementById('scanBtn').addEventListener('click', triggerNetworkScan);
     document.getElementById('siteFilter').addEventListener('input', handleSiteFilter);
     document.getElementById('sortBy').addEventListener('change', handleSortChange);
     document.getElementById('globalSearch').addEventListener('input', handleGlobalSearch);
@@ -307,6 +308,29 @@ function refreshAll() {
         loadSites();
     } else {
         loadDeviceSites(currentDeviceMac);
+    }
+}
+
+async function triggerNetworkScan() {
+    try {
+        const response = await fetch('/api/scan', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            // Wait a moment for scan to complete, then refresh
+            setTimeout(() => {
+                loadDevices();
+                loadStats();
+            }, 2000);
+            
+            // Show notification
+            alert('Network scan triggered. Devices will update in a few seconds.');
+        } else {
+            alert('Scan failed: ' + result.message);
+        }
+    } catch (error) {
+        console.error('Error triggering scan:', error);
+        alert('Error triggering network scan');
     }
 }
 

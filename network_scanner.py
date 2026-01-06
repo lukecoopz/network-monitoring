@@ -82,17 +82,45 @@ class NetworkScanner:
         print(f"Scanning network: {network_range}")
         
         try:
-            # Perform ARP scan (requires root/admin on some systems)
-            self.nm.scan(hosts=network_range, arguments='-sn')
+            # Try multiple scan methods for better device discovery
+            # Method 1: ARP scan (fast, requires root on some systems)
+            try:
+                self.nm.scan(hosts=network_range, arguments='-sn --privileged')
+                print(f"ARP scan found {len(self.nm.all_hosts())} hosts")
+            except Exception as e:
+                print(f"ARP scan failed (may need root): {e}")
+                # Try without privileged mode
+                try:
+                    self.nm.scan(hosts=network_range, arguments='-sn')
+                    print(f"Non-privileged scan found {len(self.nm.all_hosts())} hosts")
+                except Exception as e2:
+                    print(f"Non-privileged scan also failed: {e2}")
+                    # Try ping scan as fallback
+                    try:
+                        self.nm.scan(hosts=network_range, arguments='-sn -PE')
+                        print(f"Ping scan found {len(self.nm.all_hosts())} hosts")
+                    except Exception as e3:
+                        print(f"All scan methods failed: {e3}")
+                        self.scan_local_network()
+                        return
             
             conn = sqlite3.connect(self.db_file)
             c = conn.cursor()
             current_time = datetime.now().isoformat()
+            devices_found = 0
+            devices_updated = 0
+            devices_new = 0
             
             for host in self.nm.all_hosts():
                 try:
                     ip = host
                     mac = self.nm[host].get('addresses', {}).get('mac', 'unknown')
+                    
+                    # Skip if MAC is unknown (might be a false positive)
+                    if mac == 'unknown':
+                        # Try to get MAC from ARP table
+                        mac = self.get_mac_from_arp(ip) or 'unknown'
+                    
                     vendor = self.nm[host].get('vendor', {}).get(mac, 'Unknown')
                     hostname = self.get_hostname(ip) or 'Unknown'
                     
@@ -106,6 +134,7 @@ class NetworkScanner:
                             'UPDATE devices SET last_seen = ?, ip = ? WHERE mac = ?',
                             (current_time, ip, mac)
                         )
+                        devices_updated += 1
                     else:
                         # Insert new device
                         c.execute(
@@ -113,19 +142,55 @@ class NetworkScanner:
                                VALUES (?, ?, ?, ?, ?, ?)''',
                             (mac, ip, hostname, current_time, current_time, vendor)
                         )
+                        devices_new += 1
                     
+                    devices_found += 1
                     conn.commit()
                 except Exception as e:
                     print(f"Error processing host {host}: {e}")
                     continue
             
             conn.close()
-            print(f"Scan complete. Found {len(self.nm.all_hosts())} hosts")
+            print(f"Scan complete. Found {devices_found} hosts ({devices_new} new, {devices_updated} updated)")
+            
+            # Also scan local network to ensure we have our own device
+            self.scan_local_network()
             
         except Exception as e:
             print(f"Scan error: {e}")
+            import traceback
+            traceback.print_exc()
             # Fallback: try to get local network info
             self.scan_local_network()
+    
+    def get_mac_from_arp(self, ip):
+        """Try to get MAC address from ARP table"""
+        try:
+            import subprocess
+            import re
+            # Try to read from /proc/net/arp (Linux)
+            try:
+                with open('/proc/net/arp', 'r') as f:
+                    for line in f:
+                        if ip in line:
+                            parts = line.split()
+                            if len(parts) >= 4:
+                                return parts[3]
+            except:
+                pass
+            
+            # Try arp command
+            try:
+                result = subprocess.run(['arp', '-n', ip], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', result.stdout)
+                    if match:
+                        return match.group(0)
+            except:
+                pass
+        except:
+            pass
+        return None
 
     def scan_local_network(self):
         """Fallback: scan local network without nmap"""

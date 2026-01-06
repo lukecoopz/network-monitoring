@@ -130,6 +130,15 @@ def get_stats():
         'unique_domains': unique_domains
     })
 
+@app.route('/api/scan', methods=['POST'])
+def trigger_scan():
+    """Manually trigger a network scan"""
+    try:
+        scanner.scan_network()
+        return jsonify({'status': 'success', 'message': 'Network scan triggered'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/search', methods=['GET'])
 def search():
     """Search for devices and sites"""
