@@ -210,7 +210,13 @@ if __name__ == '__main__':
     capture_thread.start()
     
     print("Network Monitoring Tool starting...")
-    print("Access the web interface at http://localhost:5001")
+    
+    # Configure host and port here
+    HOST = '0.0.0.0'  # '0.0.0.0' = accessible from all interfaces, '127.0.0.1' = localhost only
+    PORT = 5000        # Change this to use a different port
+    
+    print(f"Access the web interface at http://localhost:{PORT}")
+    print(f"Or from other devices: http://<your-ip>:{PORT}")
     print("Note: Packet capture requires root/admin privileges")
     
     # Disable debug mode when running as a service (check if running in systemd)
@@ -218,5 +224,5 @@ if __name__ == '__main__':
     is_service = os.getenv('SYSTEMD_SERVICE', False) or os.path.exists('/.dockerenv') or os.getppid() == 1
     debug_mode = not is_service
     
-    app.run(host='0.0.0.0', port=5001, debug=debug_mode)
+    app.run(host=HOST, port=PORT, debug=debug_mode)
 
