@@ -289,7 +289,6 @@ class PiholeReader:
                 print("Failed to read queries from Pi-hole database after retries")
                 return False
             
-            try:
             if not rows:
                 print("No queries found in Pi-hole database")
                 return False
