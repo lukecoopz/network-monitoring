@@ -320,17 +320,53 @@ def search():
         ).fetchall()
         results['devices'] = [dict(device) for device in devices]
         
-        # Search sites
+        # Search sites - include device IP and hostname
         sites = conn.execute(
-            '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
-               FROM dns_queries
-               WHERE LOWER(domain) LIKE ?
-               GROUP BY domain
+            '''SELECT 
+                   dq.domain, 
+                   SUM(dq.count) as total_count, 
+                   MAX(dq.timestamp) as last_visited,
+                   dq.device_ip,
+                   d.hostname
+               FROM dns_queries dq
+               LEFT JOIN devices d ON dq.device_ip = d.ip
+               WHERE LOWER(dq.domain) LIKE ?
+               GROUP BY dq.domain, dq.device_ip
                ORDER BY total_count DESC
-               LIMIT 20''',
+               LIMIT 50''',
             (f'%{query}%',)
         ).fetchall()
-        results['sites'] = [dict(site) for site in sites]
+        
+        # Group by domain and aggregate, keeping the device with most visits
+        domain_map = {}
+        for site in sites:
+            domain = site['domain']
+            if domain not in domain_map:
+                domain_map[domain] = {
+                    'domain': domain,
+                    'total_count': 0,
+                    'last_visited': site['last_visited'],
+                    'device_ip': site['device_ip'],
+                    'hostname': site['hostname']
+                }
+            domain_map[domain]['total_count'] += site['total_count']
+            # Keep the device with the most recent visit or most visits
+            if site['total_count'] > domain_map[domain].get('_max_device_count', 0):
+                domain_map[domain]['device_ip'] = site['device_ip']
+                domain_map[domain]['hostname'] = site['hostname']
+                domain_map[domain]['_max_device_count'] = site['total_count']
+            if site['last_visited'] > domain_map[domain]['last_visited']:
+                domain_map[domain]['last_visited'] = site['last_visited']
+        
+        # Convert to list and remove internal tracking
+        results['sites'] = []
+        for domain_data in domain_map.values():
+            del domain_data['_max_device_count']
+            results['sites'].append(domain_data)
+        
+        # Sort by total count
+        results['sites'].sort(key=lambda x: x['total_count'], reverse=True)
+        results['sites'] = results['sites'][:20]  # Limit to top 20
         
         conn.close()
         return jsonify(results)

@@ -472,10 +472,12 @@ function displaySearchResults(results, query) {
     // Display matching sites
     if (results.sites && results.sites.length > 0) {
         html += '<div class="search-category"><h3>🌐 Matching Sites</h3>';
-        html += '<div class="table-container"><table><thead><tr><th>Domain</th><th>Visits</th><th>Last Visited</th></tr></thead><tbody>';
+        html += '<div class="table-container"><table><thead><tr><th>Domain</th><th>IP Address</th><th>Hostname</th><th>Visits</th><th>Last Visited</th></tr></thead><tbody>';
         html += results.sites.map(site => `
             <tr onclick="selectSite('${site.domain}')" style="cursor: pointer;">
                 <td class="domain">${highlightMatch(site.domain, query)}</td>
+                <td class="ip-address">${site.device_ip || 'N/A'}</td>
+                <td class="hostname">${highlightMatch(site.hostname || 'Unknown', query)}</td>
                 <td class="visits">${site.total_count}</td>
                 <td class="timestamp">${formatDate(site.last_visited)}</td>
             </tr>

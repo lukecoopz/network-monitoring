@@ -337,6 +337,17 @@ tbody tr:nth-child(even):hover {
     word-break: break-all;
 }
 
+.ip-address {
+    color: var(--cyan);
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.hostname {
+    color: var(--purple);
+    font-size: 0.95em;
+}
+
 .visits {
     color: var(--green);
     font-weight: bold;
