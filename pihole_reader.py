@@ -60,6 +60,69 @@ class PiholeReader:
         except:
             return None
     
+    def get_devices_from_pihole(self):
+        """Get unique devices (clients) from Pi-hole's database"""
+        try:
+            conn = sqlite3.connect(self.pihole_db, timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            # Get unique clients from queries table
+            # Pi-hole stores client IPs in the queries table
+            query = '''
+                SELECT DISTINCT client as ip, MAX(timestamp) as last_seen
+                FROM queries 
+                WHERE client IS NOT NULL AND client != ''
+                GROUP BY client
+            '''
+            
+            c.execute(query)
+            rows = c.fetchall()
+            conn.close()
+            
+            # Also try to get from network table if it exists
+            devices = {}
+            for row in rows:
+                ip = row['ip']
+                if ip and ip != 'unknown':
+                    devices[ip] = {
+                        'ip': ip,
+                        'last_seen': row['last_seen']
+                    }
+            
+            # Try network table (Pi-hole 5.0+)
+            try:
+                conn = sqlite3.connect(self.pihole_db, timeout=5.0)
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='network'")
+                if c.fetchone():
+                    # Network table exists - get more device info
+                    network_query = '''
+                        SELECT hwaddr as mac, ip, name as hostname, lastQuery as last_seen
+                        FROM network
+                        WHERE ip IS NOT NULL
+                    '''
+                    c.execute(network_query)
+                    network_rows = c.fetchall()
+                    for row in network_rows:
+                        ip = row['ip']
+                        if ip:
+                            devices[ip] = {
+                                'ip': ip,
+                                'mac': row.get('mac', 'unknown'),
+                                'hostname': row.get('hostname', 'Unknown'),
+                                'last_seen': row.get('last_seen', time.time())
+                            }
+                conn.close()
+            except Exception as e:
+                print(f"Could not read network table: {e}")
+            
+            return list(devices.values())
+        except Exception as e:
+            print(f"Error getting devices from Pi-hole: {e}")
+            return []
+    
     def read_pihole_db(self):
         """Read queries from Pi-hole's SQLite database"""
         try:
@@ -210,6 +273,56 @@ class PiholeReader:
             # Clear cache
             self.query_cache.clear()
     
+    def sync_devices_from_pihole(self):
+        """Sync devices from Pi-hole to monitoring database"""
+        try:
+            devices = self.get_devices_from_pihole()
+            if not devices:
+                return
+            
+            conn = sqlite3.connect(self.db_file)
+            c = conn.cursor()
+            current_time = datetime.now().isoformat()
+            
+            for device in devices:
+                try:
+                    ip = device.get('ip')
+                    mac = device.get('mac', 'unknown')
+                    hostname = device.get('hostname', 'Unknown')
+                    last_seen = device.get('last_seen', current_time)
+                    
+                    # Convert timestamp if needed
+                    if isinstance(last_seen, (int, float)):
+                        last_seen = datetime.fromtimestamp(last_seen).isoformat()
+                    
+                    # Check if device exists
+                    c.execute('SELECT * FROM devices WHERE ip = ? OR mac = ?', (ip, mac))
+                    existing = c.fetchone()
+                    
+                    if existing:
+                        # Update last seen
+                        c.execute(
+                            'UPDATE devices SET last_seen = ?, ip = ?, hostname = ? WHERE ip = ? OR mac = ?',
+                            (last_seen, ip, hostname, ip, mac)
+                        )
+                    else:
+                        # Insert new device
+                        c.execute(
+                            '''INSERT INTO devices (mac, ip, hostname, first_seen, last_seen, vendor)
+                               VALUES (?, ?, ?, ?, ?, ?)''',
+                            (mac, ip, hostname, last_seen, last_seen, 'Pi-hole Client')
+                        )
+                    
+                    conn.commit()
+                except Exception as e:
+                    print(f"Error syncing device {device}: {e}")
+                    continue
+            
+            conn.close()
+            print(f"Synced {len(devices)} devices from Pi-hole")
+        except Exception as e:
+            print(f"Error syncing devices from Pi-hole: {e}")
+    
     def read_queries(self):
         """Main loop to read queries from Pi-hole"""
         if self.reading:
@@ -224,6 +337,11 @@ class PiholeReader:
         print(f"Pi-hole detected! Reading queries from: {self.pihole_db}")
         self.reading = True
         
+        # Sync devices from Pi-hole on startup
+        if self.pihole_db.endswith('.db'):
+            print("Syncing devices from Pi-hole...")
+            self.sync_devices_from_pihole()
+        
         try:
             while self.reading:
                 try:
@@ -235,6 +353,10 @@ class PiholeReader:
                     if queries:
                         self.process_queries(queries)
                         print(f"Processed {len(queries)} queries from Pi-hole")
+                    
+                    # Sync devices periodically (every 5 minutes)
+                    if int(time.time()) % 300 < 5 and self.pihole_db.endswith('.db'):
+                        self.sync_devices_from_pihole()
                     
                     # Check every 5 seconds
                     time.sleep(5)

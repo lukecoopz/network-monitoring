@@ -135,6 +135,9 @@ def trigger_scan():
     """Manually trigger a network scan"""
     try:
         scanner.scan_network()
+        # Also sync devices from Pi-hole if available
+        if pihole.pihole_db and pihole.pihole_db.endswith('.db'):
+            pihole.sync_devices_from_pihole()
         return jsonify({'status': 'success', 'message': 'Network scan triggered'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
