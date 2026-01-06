@@ -80,14 +80,9 @@ class PiholeReader:
         # Method 2: Try to get from Pi-hole network table
         try:
             if self.pihole_db and self.pihole_db.endswith('.db'):
-                conn = sqlite3.connect(self.pihole_db, timeout=2.0)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT name FROM network WHERE ip = ?", (ip,))
-                result = c.fetchone()
-                conn.close()
-                if result and result['name']:
-                    return result['name']
+                rows = self._read_pihole_db_safe("SELECT name FROM network WHERE ip = ?", (ip,))
+                if rows and len(rows) > 0 and rows[0]['name']:
+                    return rows[0]['name']
         except:
             pass
         
@@ -119,10 +114,6 @@ class PiholeReader:
                 print("Pi-hole database not available for device discovery")
                 return []
             
-            conn = sqlite3.connect(self.pihole_db, timeout=5.0)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            
             devices = {}
             
             # Method 1: Get unique clients from queries table (most reliable)
@@ -133,8 +124,10 @@ class PiholeReader:
                     WHERE client IS NOT NULL AND client != '' AND client != 'unknown'
                     GROUP BY client
                 '''
-                c.execute(query)
-                rows = c.fetchall()
+                rows = self._read_pihole_db_safe(query)
+                if rows is None:
+                    print("Failed to read from Pi-hole database after retries")
+                    return []
                 
                 for row in rows:
                     ip = row['ip']
@@ -165,15 +158,17 @@ class PiholeReader:
             
             # Method 2: Try network table (Pi-hole 5.0+) for more details
             try:
-                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='network'")
-                if c.fetchone():
+                # Check if network table exists
+                check_rows = self._read_pihole_db_safe("SELECT name FROM sqlite_master WHERE type='table' AND name='network'")
+                if check_rows and len(check_rows) > 0:
                     network_query = '''
                         SELECT hwaddr as mac, ip, name as hostname, lastQuery as last_seen
                         FROM network
                         WHERE ip IS NOT NULL AND ip != ''
                     '''
-                    c.execute(network_query)
-                    network_rows = c.fetchall()
+                    network_rows = self._read_pihole_db_safe(network_query)
+                    if network_rows is None:
+                        network_rows = []
                     
                     for row in network_rows:
                         ip = row['ip']
@@ -253,8 +248,6 @@ class PiholeReader:
             if resolved_count > 0:
                 print(f"Resolved {resolved_count} hostnames via DNS/ARP lookup")
             
-            conn.close()
-            
             print(f"Total unique devices found in Pi-hole: {len(devices)}")
             return list(devices.values())
         except Exception as e:
@@ -271,10 +264,6 @@ class PiholeReader:
                 return False
             
             print("Syncing all queries from Pi-hole database...")
-            
-            conn = sqlite3.connect(self.pihole_db, timeout=10.0)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
             
             # Get aggregated query data directly from Pi-hole
             # This is much simpler and more reliable
@@ -295,10 +284,12 @@ class PiholeReader:
                 GROUP BY client, domain
             '''
             
-            c.execute(query)
-            rows = c.fetchall()
-            conn.close()
+            rows = self._read_pihole_db_safe(query)
+            if rows is None:
+                print("Failed to read queries from Pi-hole database after retries")
+                return False
             
+            try:
             if not rows:
                 print("No queries found in Pi-hole database")
                 return False
@@ -397,23 +388,14 @@ class PiholeReader:
             if not self.pihole_db or not self.pihole_db.endswith('.db'):
                 return []
             
-            conn = sqlite3.connect(self.pihole_db, timeout=5.0)
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            
-            # Pi-hole FTL database structure
-            # Query table has: id, timestamp, type, status, domain, client, forward, reply_type, reply_time
-            # Try to get table structure first
+            # Check if queries table exists
             try:
-                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='queries'")
-                if not c.fetchone():
-                    # Table might not exist or have different name
-                    conn.close()
+                check_rows = self._read_pihole_db_safe("SELECT name FROM sqlite_master WHERE type='table' AND name='queries'")
+                if not check_rows or len(check_rows) == 0:
                     print("Queries table not found in Pi-hole database")
                     return []
             except Exception as e:
                 print(f"Error checking for queries table: {e}")
-                conn.close()
                 return []
             
             # Build query - get recent queries
@@ -431,7 +413,7 @@ class PiholeReader:
                     ORDER BY timestamp ASC
                     LIMIT 1000
                 '''
-                c.execute(query, (self.last_timestamp,))
+                rows = self._read_pihole_db_safe(query, (self.last_timestamp,))
             else:
                 # First run - get queries from last 24 hours to populate initial data
                 one_day_ago = int(time.time()) - 86400
@@ -447,10 +429,10 @@ class PiholeReader:
                     ORDER BY timestamp ASC
                     LIMIT 5000
                 '''
-                c.execute(query, (one_day_ago,))
+                rows = self._read_pihole_db_safe(query, (one_day_ago,))
             
-            rows = c.fetchall()
-            conn.close()
+            if rows is None:
+                return []
             
             # Convert to list of tuples
             result = []
