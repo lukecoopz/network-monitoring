@@ -213,5 +213,10 @@ if __name__ == '__main__':
     print("Access the web interface at http://localhost:5001")
     print("Note: Packet capture requires root/admin privileges")
     
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    # Disable debug mode when running as a service (check if running in systemd)
+    import os
+    is_service = os.getenv('SYSTEMD_SERVICE', False) or os.path.exists('/.dockerenv') or os.getppid() == 1
+    debug_mode = not is_service
+    
+    app.run(host='0.0.0.0', port=5001, debug=debug_mode)
 

@@ -1,0 +1,24 @@
+[Unit]
+Description=Network Monitoring Tool
+After=network.target pihole-FTL.service
+Wants=pihole-FTL.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/network-monitoring
+Environment="PATH=/home/pi/network-monitoring/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/pi/network-monitoring/venv/bin/python3 /home/pi/network-monitoring/app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

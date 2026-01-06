@@ -60,6 +60,28 @@ pip install -r requirements.txt
 
 If running on a Pi-hole server, the tool automatically detects Pi-hole and reads queries from its database:
 
+**Option 1: Run as a Service (Recommended for Pi-hole)**
+
+Run as a systemd service that starts automatically on boot:
+
+```bash
+# Install the service
+sudo ./install-service.sh
+
+# Start the service
+sudo systemctl start network-monitoring
+
+# Check status
+sudo systemctl status network-monitoring
+
+# View logs
+sudo journalctl -u network-monitoring -f
+```
+
+See `PIHOLE_SERVICE_SETUP.md` for detailed service setup instructions.
+
+**Option 2: Manual Run**
+
 ```bash
 # Activate virtual environment
 source venv/bin/activate
@@ -73,6 +95,7 @@ python3 app.py
 - ✅ More reliable than packet capture
 - ✅ No network topology limitations
 - ✅ Lower resource usage
+- ✅ Can run as a service for automatic startup
 
 #### On Regular Device
 
@@ -168,17 +191,20 @@ app.run(host='0.0.0.0', port=5001, debug=True)
 
 ```
 network-monitoring/
-├── app.py                 # Main Flask application
-├── network_scanner.py     # Device discovery
-├── packet_capture.py      # DNS packet capture
-├── pihole_reader.py       # Pi-hole query log reader
-├── requirements.txt       # Python dependencies
-├── setup.sh              # Setup script
-├── static/               # Web interface
+├── app.py                      # Main Flask application
+├── network_scanner.py          # Device discovery
+├── packet_capture.py           # DNS packet capture
+├── pihole_reader.py            # Pi-hole query log reader
+├── requirements.txt             # Python dependencies
+├── setup.sh                    # Setup script
+├── install-service.sh          # Service installation script
+├── network-monitoring.service  # Systemd service file
+├── static/                     # Web interface
 │   ├── index.html
 │   ├── style.css
 │   └── app.js
-└── README.md
+├── README.md                   # This file
+└── PIHOLE_SERVICE_SETUP.md     # Service setup guide
 ```
 
 ## Security Note
