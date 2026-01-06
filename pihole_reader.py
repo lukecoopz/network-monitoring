@@ -63,64 +63,103 @@ class PiholeReader:
     def get_devices_from_pihole(self):
         """Get unique devices (clients) from Pi-hole's database"""
         try:
+            if not self.pihole_db or not self.pihole_db.endswith('.db'):
+                print("Pi-hole database not available for device discovery")
+                return []
+            
             conn = sqlite3.connect(self.pihole_db, timeout=5.0)
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             
-            # Get unique clients from queries table
-            # Pi-hole stores client IPs in the queries table
-            query = '''
-                SELECT DISTINCT client as ip, MAX(timestamp) as last_seen
-                FROM queries 
-                WHERE client IS NOT NULL AND client != ''
-                GROUP BY client
-            '''
-            
-            c.execute(query)
-            rows = c.fetchall()
-            conn.close()
-            
-            # Also try to get from network table if it exists
             devices = {}
-            for row in rows:
-                ip = row['ip']
-                if ip and ip != 'unknown':
-                    devices[ip] = {
-                        'ip': ip,
-                        'last_seen': row['last_seen']
-                    }
             
-            # Try network table (Pi-hole 5.0+)
+            # Method 1: Get unique clients from queries table (most reliable)
             try:
-                conn = sqlite3.connect(self.pihole_db, timeout=5.0)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
+                query = '''
+                    SELECT DISTINCT client as ip, MAX(timestamp) as last_seen
+                    FROM queries 
+                    WHERE client IS NOT NULL AND client != '' AND client != 'unknown'
+                    GROUP BY client
+                '''
+                c.execute(query)
+                rows = c.fetchall()
+                
+                for row in rows:
+                    ip = row['ip']
+                    if ip and ip != 'unknown' and ip != '':
+                        # Convert timestamp if needed
+                        last_seen = row['last_seen']
+                        if isinstance(last_seen, (int, float)):
+                            last_seen = datetime.fromtimestamp(last_seen).isoformat()
+                        elif isinstance(last_seen, str):
+                            try:
+                                # Try to parse as timestamp
+                                last_seen = datetime.fromtimestamp(float(last_seen)).isoformat()
+                            except:
+                                pass
+                        
+                        devices[ip] = {
+                            'ip': ip,
+                            'mac': 'unknown',
+                            'hostname': 'Unknown',
+                            'last_seen': last_seen
+                        }
+                
+                print(f"Found {len(devices)} unique clients from queries table")
+            except Exception as e:
+                print(f"Error reading queries table: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Method 2: Try network table (Pi-hole 5.0+) for more details
+            try:
                 c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='network'")
                 if c.fetchone():
-                    # Network table exists - get more device info
                     network_query = '''
                         SELECT hwaddr as mac, ip, name as hostname, lastQuery as last_seen
                         FROM network
-                        WHERE ip IS NOT NULL
+                        WHERE ip IS NOT NULL AND ip != ''
                     '''
                     c.execute(network_query)
                     network_rows = c.fetchall()
+                    
                     for row in network_rows:
                         ip = row['ip']
                         if ip:
-                            devices[ip] = {
-                                'ip': ip,
-                                'mac': row.get('mac', 'unknown'),
-                                'hostname': row.get('hostname', 'Unknown'),
-                                'last_seen': row.get('last_seen', time.time())
-                            }
-                conn.close()
+                            # Convert timestamp
+                            last_seen = row.get('last_seen', time.time())
+                            if isinstance(last_seen, (int, float)):
+                                last_seen = datetime.fromtimestamp(last_seen).isoformat()
+                            elif isinstance(last_seen, str):
+                                try:
+                                    last_seen = datetime.fromtimestamp(float(last_seen)).isoformat()
+                                except:
+                                    pass
+                            
+                            # Update or add device with better info
+                            if ip in devices:
+                                devices[ip]['mac'] = row.get('mac', devices[ip].get('mac', 'unknown'))
+                                devices[ip]['hostname'] = row.get('hostname', devices[ip].get('hostname', 'Unknown'))
+                            else:
+                                devices[ip] = {
+                                    'ip': ip,
+                                    'mac': row.get('mac', 'unknown'),
+                                    'hostname': row.get('hostname', 'Unknown'),
+                                    'last_seen': last_seen
+                                }
+                    
+                    print(f"Updated {len(network_rows)} devices from network table")
             except Exception as e:
-                print(f"Could not read network table: {e}")
+                print(f"Could not read network table (may not exist): {e}")
             
+            conn.close()
+            
+            print(f"Total unique devices found in Pi-hole: {len(devices)}")
             return list(devices.values())
         except Exception as e:
             print(f"Error getting devices from Pi-hole: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def read_pihole_db(self):
@@ -276,52 +315,76 @@ class PiholeReader:
     def sync_devices_from_pihole(self):
         """Sync devices from Pi-hole to monitoring database"""
         try:
+            print("Starting device sync from Pi-hole...")
             devices = self.get_devices_from_pihole()
+            
             if not devices:
+                print("No devices found in Pi-hole database")
                 return
+            
+            print(f"Syncing {len(devices)} devices to monitoring database...")
             
             conn = sqlite3.connect(self.db_file)
             c = conn.cursor()
             current_time = datetime.now().isoformat()
             
+            synced_count = 0
+            updated_count = 0
+            new_count = 0
+            
             for device in devices:
                 try:
                     ip = device.get('ip')
+                    if not ip or ip == 'unknown' or ip == '':
+                        continue
+                    
                     mac = device.get('mac', 'unknown')
                     hostname = device.get('hostname', 'Unknown')
                     last_seen = device.get('last_seen', current_time)
                     
-                    # Convert timestamp if needed
+                    # Ensure last_seen is a string
                     if isinstance(last_seen, (int, float)):
                         last_seen = datetime.fromtimestamp(last_seen).isoformat()
+                    elif not isinstance(last_seen, str):
+                        last_seen = current_time
                     
-                    # Check if device exists
-                    c.execute('SELECT * FROM devices WHERE ip = ? OR mac = ?', (ip, mac))
+                    # Check if device exists by IP or MAC
+                    c.execute('SELECT mac FROM devices WHERE ip = ? OR (mac = ? AND mac != "unknown")', (ip, mac))
                     existing = c.fetchone()
                     
                     if existing:
-                        # Update last seen
+                        # Update existing device
+                        existing_mac = existing[0]
                         c.execute(
                             'UPDATE devices SET last_seen = ?, ip = ?, hostname = ? WHERE ip = ? OR mac = ?',
-                            (last_seen, ip, hostname, ip, mac)
+                            (last_seen, ip, hostname, ip, existing_mac)
                         )
+                        updated_count += 1
                     else:
                         # Insert new device
+                        # Use IP-based MAC if MAC is unknown
+                        device_mac = mac if mac != 'unknown' else f"pihole-{ip.replace('.', '-')}"
                         c.execute(
                             '''INSERT INTO devices (mac, ip, hostname, first_seen, last_seen, vendor)
                                VALUES (?, ?, ?, ?, ?, ?)''',
-                            (mac, ip, hostname, last_seen, last_seen, 'Pi-hole Client')
+                            (device_mac, ip, hostname, last_seen, last_seen, 'Pi-hole Client')
                         )
+                        new_count += 1
                     
+                    synced_count += 1
                     conn.commit()
                 except Exception as e:
                     print(f"Error syncing device {device}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
             
             conn.close()
-            print(f"Synced {len(devices)} devices from Pi-hole")
+            print(f"Device sync complete: {synced_count} total ({new_count} new, {updated_count} updated)")
         except Exception as e:
             print(f"Error syncing devices from Pi-hole: {e}")
+            import traceback
+            traceback.print_exc()
     
     def read_queries(self):
         """Main loop to read queries from Pi-hole"""
@@ -337,9 +400,11 @@ class PiholeReader:
         print(f"Pi-hole detected! Reading queries from: {self.pihole_db}")
         self.reading = True
         
-        # Sync devices from Pi-hole on startup
+        # Sync devices from Pi-hole on startup (wait a moment for DB to be ready)
         if self.pihole_db.endswith('.db'):
-            print("Syncing devices from Pi-hole...")
+            print("Waiting 2 seconds before initial device sync...")
+            time.sleep(2)
+            print("Syncing devices from Pi-hole on startup...")
             self.sync_devices_from_pihole()
         
         try:

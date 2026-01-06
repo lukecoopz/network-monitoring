@@ -134,13 +134,54 @@ def get_stats():
 def trigger_scan():
     """Manually trigger a network scan"""
     try:
-        scanner.scan_network()
-        # Also sync devices from Pi-hole if available
+        # Sync devices from Pi-hole first (most reliable)
         if pihole.pihole_db and pihole.pihole_db.endswith('.db'):
+            print("Manual scan: Syncing devices from Pi-hole...")
             pihole.sync_devices_from_pihole()
-        return jsonify({'status': 'success', 'message': 'Network scan triggered'})
+        
+        # Then do network scan
+        print("Manual scan: Running network scan...")
+        scanner.scan_network()
+        
+        return jsonify({'status': 'success', 'message': 'Network scan and Pi-hole sync triggered'})
     except Exception as e:
+        print(f"Error in trigger_scan: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    """Get recent application logs"""
+    try:
+        import subprocess
+        import os
+        
+        # Try to get logs from journalctl if running as service
+        try:
+            result = subprocess.run(
+                ['journalctl', '-u', 'network-monitoring', '-n', '100', '--no-pager'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                return jsonify({
+                    'status': 'success',
+                    'logs': result.stdout,
+                    'source': 'systemd'
+                })
+        except:
+            pass
+        
+        # Fallback: return a message about checking logs
+        return jsonify({
+            'status': 'info',
+            'logs': 'Logs are available via: sudo journalctl -u network-monitoring -f\n\nOr check the console output if running manually.',
+            'source': 'info'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'logs': f'Error getting logs: {str(e)}'}), 500
 
 @app.route('/api/search', methods=['GET'])
 def search():

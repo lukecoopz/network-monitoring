@@ -387,6 +387,118 @@ mark {
     font-weight: bold;
 }
 
+.logs-section {
+    background: var(--bg-alt);
+    padding: 25px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    margin-top: 30px;
+}
+
+.logs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    padding: 10px;
+    border-radius: 5px;
+    transition: background 0.2s ease;
+}
+
+.logs-header:hover {
+    background: var(--selection);
+}
+
+.logs-header h2 {
+    color: var(--purple);
+    margin: 0;
+    font-size: 1.5em;
+}
+
+.logs-toggle {
+    color: var(--fg-alt);
+    font-size: 1.2em;
+    transition: transform 0.3s ease;
+}
+
+.logs-content {
+    margin-top: 20px;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.logs-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.auto-refresh-label {
+    color: var(--fg-alt);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.auto-refresh-label input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.logs-container {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 15px;
+    max-height: 400px;
+    overflow: auto;
+}
+
+.logs-display {
+    color: var(--fg);
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    line-height: 1.5;
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.logs-display::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.logs-display::-webkit-scrollbar-track {
+    background: var(--bg-alt);
+}
+
+.logs-display::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+.logs-display::-webkit-scrollbar-thumb:hover {
+    background: var(--fg-alt);
+}
+
 .devices-section {
     background: var(--bg-alt);
     padding: 25px;

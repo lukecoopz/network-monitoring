@@ -95,6 +95,26 @@
                     <!-- Device cards will be populated by JavaScript -->
                 </div>
             </div>
+
+            <div class="logs-section" id="logsSection">
+                <div class="logs-header" onclick="toggleLogs()">
+                    <h2>📋 System Logs</h2>
+                    <span class="logs-toggle" id="logsToggle">▼</span>
+                </div>
+                <div class="logs-content" id="logsContent" style="display: none;">
+                    <div class="logs-controls">
+                        <button id="refreshLogsBtn" class="btn-primary">Refresh Logs</button>
+                        <button id="clearLogsBtn" class="btn-primary" style="background: var(--red);">Clear</button>
+                        <label class="auto-refresh-label">
+                            <input type="checkbox" id="autoRefreshLogs" checked>
+                            Auto-refresh (5s)
+                        </label>
+                    </div>
+                    <div class="logs-container">
+                        <pre id="logsDisplay" class="logs-display">Loading logs...</pre>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 

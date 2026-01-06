@@ -492,3 +492,94 @@ function selectSite(domain) {
     handleSiteFilter();
 }
 
+// Logs functionality
+let logsAutoRefresh = null;
+let logsExpanded = false;
+
+function toggleLogs() {
+    const logsContent = document.getElementById('logsContent');
+    const logsToggle = document.getElementById('logsToggle');
+    
+    logsExpanded = !logsExpanded;
+    
+    if (logsExpanded) {
+        logsContent.style.display = 'block';
+        logsToggle.textContent = '▲';
+        loadLogs();
+        startLogsAutoRefresh();
+    } else {
+        logsContent.style.display = 'none';
+        logsToggle.textContent = '▼';
+        stopLogsAutoRefresh();
+    }
+}
+
+async function loadLogs() {
+    try {
+        const response = await fetch('/api/logs');
+        const data = await response.json();
+        
+        const logsDisplay = document.getElementById('logsDisplay');
+        
+        if (data.status === 'success' || data.status === 'info') {
+            logsDisplay.textContent = data.logs || 'No logs available';
+            // Auto-scroll to bottom
+            logsDisplay.scrollTop = logsDisplay.scrollHeight;
+        } else {
+            logsDisplay.textContent = `Error: ${data.logs || 'Failed to load logs'}`;
+        }
+    } catch (error) {
+        console.error('Error loading logs:', error);
+        document.getElementById('logsDisplay').textContent = `Error loading logs: ${error.message}`;
+    }
+}
+
+function startLogsAutoRefresh() {
+    const autoRefreshCheckbox = document.getElementById('autoRefreshLogs');
+    
+    if (autoRefreshCheckbox.checked && logsExpanded) {
+        logsAutoRefresh = setInterval(() => {
+            if (logsExpanded) {
+                loadLogs();
+            }
+        }, 5000); // Refresh every 5 seconds
+    }
+}
+
+function stopLogsAutoRefresh() {
+    if (logsAutoRefresh) {
+        clearInterval(logsAutoRefresh);
+        logsAutoRefresh = null;
+    }
+}
+
+// Set up logs event listeners
+document.addEventListener('DOMContentLoaded', () => {
+    // Add logs event listeners after initial setup
+    setTimeout(() => {
+        const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+        const clearLogsBtn = document.getElementById('clearLogsBtn');
+        const autoRefreshCheckbox = document.getElementById('autoRefreshLogs');
+        
+        if (refreshLogsBtn) {
+            refreshLogsBtn.addEventListener('click', loadLogs);
+        }
+        
+        if (clearLogsBtn) {
+            clearLogsBtn.addEventListener('click', () => {
+                document.getElementById('logsDisplay').textContent = 'Logs cleared.\n';
+            });
+        }
+        
+        if (autoRefreshCheckbox) {
+            autoRefreshCheckbox.addEventListener('change', () => {
+                if (autoRefreshCheckbox.checked && logsExpanded) {
+                    startLogsAutoRefresh();
+                } else {
+                    stopLogsAutoRefresh();
+                }
+            });
+        }
+    }, 100);
+});
+
