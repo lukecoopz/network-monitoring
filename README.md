@@ -13,6 +13,7 @@ A simplified network monitoring tool similar to Ntopng that tracks devices on yo
   - Global search for devices and sites
   - Real-time statistics
 - **Pi-hole Integration**: Automatically detects and uses Pi-hole's query log (recommended)
+- **Service Support**: Can run as a systemd service for automatic startup
 - **Dracula Theme**: Beautiful dark theme UI
 
 ## Requirements
@@ -54,18 +55,17 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Running the Application
+### Running on Pi-hole Server (Recommended)
 
-#### On Pi-hole Server (Recommended)
+**This tool works perfectly on Pi-hole servers!** Since Pi-hole acts as the DNS server for your network, it sees ALL DNS queries from all devices. The tool will automatically detect Pi-hole and read queries directly from Pi-hole's database.
 
-If running on a Pi-hole server, the tool automatically detects Pi-hole and reads queries from its database:
+#### Option 1: Run as a Service (Recommended)
 
-**Option 1: Run as a Service (Recommended for Pi-hole)**
-
-Run as a systemd service that starts automatically on boot:
+Run as a systemd service that starts automatically on boot and runs in the background:
 
 ```bash
 # Install the service
+sudo chmod +x install-service.sh
 sudo ./install-service.sh
 
 # Start the service
@@ -78,9 +78,24 @@ sudo systemctl status network-monitoring
 sudo journalctl -u network-monitoring -f
 ```
 
-See `PIHOLE_SERVICE_SETUP.md` for detailed service setup instructions.
+**Service Management:**
+```bash
+# Start/Stop/Restart
+sudo systemctl start network-monitoring
+sudo systemctl stop network-monitoring
+sudo systemctl restart network-monitoring
 
-**Option 2: Manual Run**
+# Enable/Disable auto-start on boot
+sudo systemctl enable network-monitoring
+sudo systemctl disable network-monitoring
+
+# View logs
+sudo journalctl -u network-monitoring -f
+```
+
+See `PIHOLE_SERVICE_SETUP.md` for detailed service setup and troubleshooting.
+
+#### Option 2: Manual Run
 
 ```bash
 # Activate virtual environment
@@ -90,24 +105,24 @@ source venv/bin/activate
 python3 app.py
 ```
 
-**Benefits:**
+**Benefits of running on Pi-hole:**
 - ✅ Sees ALL DNS queries from ALL devices
 - ✅ More reliable than packet capture
 - ✅ No network topology limitations
 - ✅ Lower resource usage
 - ✅ Can run as a service for automatic startup
 
-#### On Regular Device
+### Running on Regular Device
 
 ```bash
 # Activate virtual environment
-source venv/bin/activate
+source venv/bin/activate  # if using venv
 
 # Run with sudo (required for packet capture)
 sudo python3 app.py
 ```
 
-**Note**: If using a virtual environment with sudo, use:
+**Note**: If you're using a virtual environment with sudo, use:
 ```bash
 sudo venv/bin/python3 app.py
 ```
@@ -120,7 +135,7 @@ python app.py
 
 The web interface will be available at: `http://localhost:5001`
 
-**Note**: If port 5001 is in use, change it in `app.py` (line 209).
+**Note**: If port 5001 is in use, change it in `app.py` (line 216).
 
 ## How It Works
 
@@ -134,6 +149,7 @@ The web interface will be available at: `http://localhost:5001`
    - Top sites visited across all devices
    - Per-device site filtering
    - Global search functionality
+   - Timestamps and filtering options
 
 ## Network Limitations
 
@@ -157,6 +173,7 @@ The tool automatically uses Pi-hole's query log when available, which bypasses t
 
 - Make sure you're running with `sudo` (macOS/Linux) or as Administrator (Windows)
 - On macOS, grant Terminal/IDE network permissions in System Preferences
+- For Pi-hole database access, ensure your user has read permissions
 
 ### No Devices Found
 
@@ -169,12 +186,46 @@ The tool automatically uses Pi-hole's query log when available, which bypasses t
 - DNS queries are only captured when devices make DNS requests
 - Ensure devices are actively browsing the web
 - On Pi-hole: Check that Pi-hole is running and accessible
+- Check service logs: `sudo journalctl -u network-monitoring -n 50`
+
+### Service Issues
+
+If running as a service and having problems:
+
+1. **Check service status**:
+   ```bash
+   sudo systemctl status network-monitoring
+   ```
+
+2. **View logs**:
+   ```bash
+   sudo journalctl -u network-monitoring -f
+   ```
+
+3. **Verify paths in service file**:
+   ```bash
+   sudo systemctl cat network-monitoring
+   ```
+
+4. **Test manual run**:
+   ```bash
+   cd /path/to/network-monitoring
+   source venv/bin/activate
+   python3 app.py
+   ```
+
+See `PIHOLE_SERVICE_SETUP.md` for detailed troubleshooting.
 
 ### Port Already in Use
 
 Change the port in `app.py`:
 ```python
 app.run(host='0.0.0.0', port=5001, debug=True)
+```
+
+Then restart the service:
+```bash
+sudo systemctl restart network-monitoring
 ```
 
 ## Technical Details
@@ -186,6 +237,7 @@ app.run(host='0.0.0.0', port=5001, debug=True)
 - **Pi-hole Integration**: Direct database reading
 - **Frontend**: Vanilla JavaScript with Chart.js
 - **Theme**: Dracula color scheme
+- **Service**: Systemd service support
 
 ## Project Structure
 
