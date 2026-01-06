@@ -31,6 +31,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('deviceFilter').addEventListener('change', handleDeviceFilter);
     document.getElementById('refreshBtn').addEventListener('click', refreshAll);
     document.getElementById('scanBtn').addEventListener('click', triggerNetworkScan);
+    const forceSyncBtn = document.getElementById('forceSyncBtn');
+    if (forceSyncBtn) {
+        forceSyncBtn.addEventListener('click', forceSyncQueries);
+    }
     document.getElementById('siteFilter').addEventListener('input', handleSiteFilter);
     document.getElementById('sortBy').addEventListener('change', handleSortChange);
     document.getElementById('globalSearch').addEventListener('input', handleGlobalSearch);
@@ -331,6 +335,41 @@ async function triggerNetworkScan() {
     } catch (error) {
         console.error('Error triggering scan:', error);
         alert('Error triggering network scan');
+    }
+}
+
+async function forceSyncQueries() {
+    try {
+        const btn = document.getElementById('forceSyncBtn');
+        btn.disabled = true;
+        btn.textContent = 'Syncing...';
+        
+        const response = await fetch('/api/debug/force-sync', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.status === 'success') {
+            // Wait a moment, then refresh
+            setTimeout(() => {
+                loadSites();
+                loadStats();
+                if (currentDeviceMac !== 'all') {
+                    loadDeviceSites(currentDeviceMac);
+                }
+            }, 2000);
+            
+            alert(`Success: ${result.message}`);
+        } else {
+            alert(result.message || 'Sync completed');
+        }
+        
+        btn.disabled = false;
+        btn.textContent = 'Force Sync Queries';
+    } catch (error) {
+        console.error('Error forcing sync:', error);
+        alert('Error forcing query sync');
+        const btn = document.getElementById('forceSyncBtn');
+        btn.disabled = false;
+        btn.textContent = 'Force Sync Queries';
     }
 }
 

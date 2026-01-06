@@ -564,7 +564,8 @@ class PiholeReader:
     def read_queries(self):
         """Main loop to read queries from Pi-hole"""
         if self.reading:
-            return
+            print("Pi-hole reader is already running")
+            return True
         
         self.pihole_db = self.detect_pihole()
         
@@ -581,10 +582,24 @@ class PiholeReader:
             time.sleep(2)
             print("Syncing devices from Pi-hole on startup...")
             self.sync_devices_from_pihole()
+            
+            # Also do an initial query read to populate sites
+            print("Doing initial query read to populate sites...")
+            queries = self.read_pihole_db()
+            if queries:
+                print(f"Initial read: Found {len(queries)} queries")
+                self.process_queries(queries)
+                # Force flush after initial read
+                self.flush_to_db()
         
+        iteration = 0
         try:
             while self.reading:
                 try:
+                    iteration += 1
+                    if iteration % 12 == 0:  # Every minute, log status
+                        print(f"Pi-hole reader running... (iteration {iteration})")
+                    
                     if self.pihole_db.endswith('.db'):
                         queries = self.read_pihole_db()
                     else:

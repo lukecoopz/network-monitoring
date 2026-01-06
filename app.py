@@ -192,8 +192,17 @@ def debug_pihole():
             'pihole_path': pihole.pihole_db,
             'reading': pihole.reading,
             'last_timestamp': pihole.last_timestamp,
-            'cached_queries': len(pihole.query_cache) if pihole.query_cache else 0
+            'cached_queries': len(pihole.query_cache) if pihole.query_cache else 0,
+            'cached_query_count': sum(sum(domains.values()) for domains in pihole.query_cache.values()) if pihole.query_cache else 0
         }
+        
+        # Check monitoring database
+        conn = get_db_connection()
+        total_queries = conn.execute('SELECT COUNT(*) FROM dns_queries').fetchone()[0]
+        unique_domains = conn.execute('SELECT COUNT(DISTINCT domain) FROM dns_queries').fetchone()[0]
+        conn.close()
+        debug_info['monitoring_db_queries'] = total_queries
+        debug_info['monitoring_db_domains'] = unique_domains
         
         # Try to get some stats from Pi-hole database
         if pihole.pihole_db and pihole.pihole_db.endswith('.db'):
@@ -205,25 +214,53 @@ def debug_pihole():
                 # Get total queries count
                 c.execute("SELECT COUNT(*) FROM queries WHERE timestamp > ?", (int(time.time()) - 86400,))
                 recent_queries = c.fetchone()[0]
-                debug_info['recent_queries_24h'] = recent_queries
+                debug_info['pihole_recent_queries_24h'] = recent_queries
                 
                 # Get unique clients
                 c.execute("SELECT COUNT(DISTINCT client) FROM queries WHERE client != '' AND client IS NOT NULL")
                 unique_clients = c.fetchone()[0]
-                debug_info['unique_clients'] = unique_clients
+                debug_info['pihole_unique_clients'] = unique_clients
                 
                 # Get unique domains
                 c.execute("SELECT COUNT(DISTINCT domain) FROM queries WHERE domain != '' AND domain IS NOT NULL AND timestamp > ?", (int(time.time()) - 86400,))
                 unique_domains = c.fetchone()[0]
-                debug_info['unique_domains_24h'] = unique_domains
+                debug_info['pihole_unique_domains_24h'] = unique_domains
+                
+                # Get sample of recent queries
+                c.execute("SELECT domain, client, timestamp FROM queries WHERE timestamp > ? ORDER BY timestamp DESC LIMIT 10", (int(time.time()) - 3600,))
+                sample_queries = c.fetchall()
+                debug_info['sample_recent_queries'] = [{'domain': q[0], 'client': q[1], 'timestamp': q[2]} for q in sample_queries]
                 
                 conn.close()
             except Exception as e:
                 debug_info['pihole_db_error'] = str(e)
+                import traceback
+                debug_info['pihole_db_traceback'] = traceback.format_exc()
         
         return jsonify(debug_info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug/force-sync', methods=['POST'])
+def force_sync():
+    """Force sync queries from Pi-hole"""
+    try:
+        if not pihole.pihole_db or not pihole.pihole_db.endswith('.db'):
+            return jsonify({'status': 'error', 'message': 'Pi-hole not detected'}), 400
+        
+        # Force read and process queries
+        print("Force sync: Reading queries from Pi-hole...")
+        queries = pihole.read_pihole_db()
+        
+        if queries:
+            print(f"Force sync: Processing {len(queries)} queries...")
+            pihole.process_queries(queries)
+            pihole.flush_to_db()
+            return jsonify({'status': 'success', 'message': f'Processed {len(queries)} queries'})
+        else:
+            return jsonify({'status': 'info', 'message': 'No new queries found'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/search', methods=['GET'])
 def search():
@@ -280,13 +317,18 @@ def background_scanner():
 
 def background_capture():
     """Background thread for packet capture or Pi-hole reading"""
+    # Wait a moment for everything to initialize
+    time.sleep(2)
+    
     # Try Pi-hole first (if available, it's more reliable)
+    print("Attempting to start Pi-hole reader...")
     if pihole.read_queries():
         # Pi-hole reading is active, don't use packet capture
-        print("Using Pi-hole query log. Packet capture not needed.")
+        print("✓ Using Pi-hole query log. Packet capture not needed.")
         return
     
     # Fall back to packet capture if Pi-hole is not available
+    print("Pi-hole not available, falling back to packet capture...")
     while True:
         try:
             capture.capture_packets()
