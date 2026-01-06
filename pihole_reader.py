@@ -50,7 +50,7 @@ class PiholeReader:
     def get_device_mac(self, ip):
         """Get MAC address for an IP from devices table"""
         try:
-            conn = sqlite3.connect(self.db_file)
+            conn = sqlite3.connect(self.db_file, timeout=10.0)
             c = conn.cursor()
             result = c.execute(
                 'SELECT mac FROM devices WHERE ip = ? LIMIT 1',
@@ -346,7 +346,28 @@ class PiholeReader:
             print(f"Found {len(rows)} unique domain-client pairs in Pi-hole")
             
             # Now insert/update in monitoring database
-            monitoring_conn = sqlite3.connect(self.db_file)
+            # Use retry logic for database connection
+            max_retries = 5
+            retry_delay = 0.2
+            monitoring_conn = None
+            
+            for attempt in range(max_retries):
+                try:
+                    monitoring_conn = sqlite3.connect(self.db_file, timeout=10.0)
+                    monitoring_conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
+                    break
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5
+                        continue
+                    else:
+                        raise
+            
+            if monitoring_conn is None:
+                print("Failed to connect to monitoring database after retries")
+                return False
+            
             monitoring_c = monitoring_conn.cursor()
             current_time = datetime.now().isoformat()
             
@@ -613,7 +634,29 @@ class PiholeReader:
             
             print(f"Flushing {total_queries} cached queries to database...")
             
-            conn = sqlite3.connect(self.db_file)
+            # Use retry logic for database connection
+            max_retries = 5
+            retry_delay = 0.2
+            conn = None
+            
+            for attempt in range(max_retries):
+                try:
+                    conn = sqlite3.connect(self.db_file, timeout=10.0)
+                    conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
+                    break
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5
+                        continue
+                    else:
+                        print(f"Failed to connect to database: {e}")
+                        return
+            
+            if conn is None:
+                print("Failed to connect to database after retries")
+                return
+            
             c = conn.cursor()
             current_time = datetime.now().isoformat()
             
@@ -663,7 +706,28 @@ class PiholeReader:
             
             print(f"Syncing {len(devices)} devices to monitoring database...")
             
-            conn = sqlite3.connect(self.db_file)
+            # Use retry logic for database connection
+            max_retries = 5
+            retry_delay = 0.2
+            conn = None
+            
+            for attempt in range(max_retries):
+                try:
+                    conn = sqlite3.connect(self.db_file, timeout=10.0)
+                    conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode for better concurrency
+                    break
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5
+                        continue
+                    else:
+                        raise
+            
+            if conn is None:
+                print("Failed to connect to database after retries")
+                return
+            
             c = conn.cursor()
             current_time = datetime.now().isoformat()
             
@@ -716,13 +780,27 @@ class PiholeReader:
                         new_count += 1
                     
                     synced_count += 1
-                    conn.commit()
+                    # Commit less frequently to reduce lock contention
+                    if synced_count % 10 == 0:
+                        conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e).lower():
+                        print(f"Database locked while syncing device {ip}, retrying...")
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        print(f"Error syncing device {device}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
                 except Exception as e:
                     print(f"Error syncing device {device}: {e}")
                     import traceback
                     traceback.print_exc()
                     continue
             
+            # Final commit
+            conn.commit()
             conn.close()
             print(f"Device sync complete: {synced_count} total ({new_count} new, {updated_count} updated)")
         except Exception as e:

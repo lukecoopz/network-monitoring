@@ -31,8 +31,11 @@ DB_FILE = 'network_monitoring.db'
 
 def init_db():
     """Initialize SQLite database"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10.0)
     c = conn.cursor()
+    
+    # Enable WAL mode for better concurrency
+    c.execute('PRAGMA journal_mode=WAL')
     
     # Devices table
     c.execute('''CREATE TABLE IF NOT EXISTS devices
@@ -49,11 +52,24 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_db_connection():
-    """Get database connection"""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_db_connection(max_retries=5):
+    """Get database connection with retry logic"""
+    retry_delay = 0.1
+    for attempt in range(max_retries):
+        try:
+            conn = sqlite3.connect(DB_FILE, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            conn.execute('PRAGMA journal_mode=WAL')
+            return conn
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay *= 1.5
+                continue
+            else:
+                raise
+    raise sqlite3.OperationalError("Failed to connect to database after retries")
 
 @app.route('/')
 def index():
@@ -68,67 +84,77 @@ def serve_static(path):
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
     """Get all discovered devices"""
-    conn = get_db_connection()
-    devices = conn.execute(
-        'SELECT * FROM devices ORDER BY last_seen DESC'
-    ).fetchall()
-    conn.close()
-    
-    return jsonify([dict(device) for device in devices])
+    try:
+        conn = get_db_connection()
+        devices = conn.execute(
+            'SELECT * FROM devices ORDER BY last_seen DESC'
+        ).fetchall()
+        conn.close()
+        return jsonify([dict(device) for device in devices])
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return jsonify({'error': 'Database temporarily locked, please try again'}), 503
+        raise
 
 @app.route('/api/devices/<device_mac>/sites', methods=['GET'])
 def get_device_sites(device_mac):
     """Get top sites for a specific device"""
-    conn = get_db_connection()
-    
-    # Get sites for device with latest timestamp
-    sites = conn.execute(
-        '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
-           FROM dns_queries
-           WHERE device_mac = ?
-           GROUP BY domain
-           ORDER BY total_count DESC
-           LIMIT 100''',
-        (device_mac,)
-    ).fetchall()
-    
-    conn.close()
-    
-    return jsonify([dict(site) for site in sites])
+    try:
+        conn = get_db_connection()
+        # Get sites for device with latest timestamp
+        sites = conn.execute(
+            '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
+               FROM dns_queries
+               WHERE device_mac = ?
+               GROUP BY domain
+               ORDER BY total_count DESC
+               LIMIT 100''',
+            (device_mac,)
+        ).fetchall()
+        conn.close()
+        return jsonify([dict(site) for site in sites])
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return jsonify({'error': 'Database temporarily locked, please try again'}), 503
+        raise
 
 @app.route('/api/sites/all', methods=['GET'])
 def get_all_sites():
     """Get top sites across all devices"""
-    conn = get_db_connection()
-    
-    sites = conn.execute(
-        '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
-           FROM dns_queries
-           GROUP BY domain
-           ORDER BY total_count DESC
-           LIMIT 100'''
-    ).fetchall()
-    
-    conn.close()
-    
-    return jsonify([dict(site) for site in sites])
+    try:
+        conn = get_db_connection()
+        sites = conn.execute(
+            '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
+               FROM dns_queries
+               GROUP BY domain
+               ORDER BY total_count DESC
+               LIMIT 100'''
+        ).fetchall()
+        conn.close()
+        return jsonify([dict(site) for site in sites])
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return jsonify({'error': 'Database temporarily locked, please try again'}), 503
+        raise
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Get overall statistics"""
-    conn = get_db_connection()
-    
-    device_count = conn.execute('SELECT COUNT(*) FROM devices').fetchone()[0]
-    total_queries = conn.execute('SELECT SUM(count) FROM dns_queries').fetchone()[0] or 0
-    unique_domains = conn.execute('SELECT COUNT(DISTINCT domain) FROM dns_queries').fetchone()[0]
-    
-    conn.close()
-    
-    return jsonify({
-        'device_count': device_count,
-        'total_queries': total_queries,
-        'unique_domains': unique_domains
-    })
+    try:
+        conn = get_db_connection()
+        device_count = conn.execute('SELECT COUNT(*) FROM devices').fetchone()[0]
+        total_queries = conn.execute('SELECT SUM(count) FROM dns_queries').fetchone()[0] or 0
+        unique_domains = conn.execute('SELECT COUNT(DISTINCT domain) FROM dns_queries').fetchone()[0]
+        conn.close()
+        return jsonify({
+            'device_count': device_count,
+            'total_queries': total_queries,
+            'unique_domains': unique_domains
+        })
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return jsonify({'error': 'Database temporarily locked, please try again'}), 503
+        raise
 
 @app.route('/api/scan', methods=['POST'])
 def trigger_scan():
@@ -197,12 +223,16 @@ def debug_pihole():
         }
         
         # Check monitoring database
-        conn = get_db_connection()
-        total_queries = conn.execute('SELECT COUNT(*) FROM dns_queries').fetchone()[0]
-        unique_domains = conn.execute('SELECT COUNT(DISTINCT domain) FROM dns_queries').fetchone()[0]
-        conn.close()
-        debug_info['monitoring_db_queries'] = total_queries
-        debug_info['monitoring_db_domains'] = unique_domains
+        try:
+            conn = get_db_connection()
+            total_queries = conn.execute('SELECT COUNT(*) FROM dns_queries').fetchone()[0]
+            unique_domains = conn.execute('SELECT COUNT(DISTINCT domain) FROM dns_queries').fetchone()[0]
+            conn.close()
+            debug_info['monitoring_db_queries'] = total_queries
+            debug_info['monitoring_db_domains'] = unique_domains
+        except sqlite3.OperationalError:
+            debug_info['monitoring_db_queries'] = 'locked'
+            debug_info['monitoring_db_domains'] = 'locked'
         
         # Try to get some stats from Pi-hole database
         if pihole.pihole_db and pihole.pihole_db.endswith('.db'):
@@ -273,11 +303,12 @@ def search():
             'sites': []
         })
     
-    conn = get_db_connection()
-    results = {'devices': [], 'sites': []}
-    
-    # Search devices
-    devices = conn.execute(
+    try:
+        conn = get_db_connection()
+        results = {'devices': [], 'sites': []}
+        
+        # Search devices
+        devices = conn.execute(
         '''SELECT * FROM devices 
            WHERE LOWER(hostname) LIKE ? 
            OR LOWER(ip) LIKE ? 
@@ -302,8 +333,11 @@ def search():
     results['sites'] = [dict(site) for site in sites]
     
     conn.close()
-    
     return jsonify(results)
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e).lower():
+            return jsonify({'error': 'Database temporarily locked, please try again'}), 503
+        raise
 
 def background_scanner():
     """Background thread for network scanning"""
