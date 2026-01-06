@@ -7,6 +7,10 @@ import sqlite3
 import os
 import threading
 import time
+import socket
+import subprocess
+import re
+import concurrent.futures
 from datetime import datetime
 from collections import defaultdict
 
@@ -59,6 +63,54 @@ class PiholeReader:
             return None
         except:
             return None
+    
+    def get_hostname(self, ip):
+        """Get hostname for an IP address using multiple methods"""
+        hostname = None
+        
+        # Method 1: Try reverse DNS lookup
+        try:
+            import socket
+            hostname = socket.gethostbyaddr(ip)[0]
+            if hostname:
+                return hostname
+        except:
+            pass
+        
+        # Method 2: Try to get from Pi-hole network table
+        try:
+            if self.pihole_db and self.pihole_db.endswith('.db'):
+                conn = sqlite3.connect(self.pihole_db, timeout=2.0)
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute("SELECT name FROM network WHERE ip = ?", (ip,))
+                result = c.fetchone()
+                conn.close()
+                if result and result['name']:
+                    return result['name']
+        except:
+            pass
+        
+        # Method 3: Try ARP table
+        try:
+            import subprocess
+            import re
+            # Try arp command
+            result = subprocess.run(['arp', '-n', ip], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                # Some systems include hostname in arp output
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    if ip in line:
+                        # Try to extract hostname if present
+                        parts = line.split()
+                        for part in parts:
+                            if '.' in part and part != ip and not re.match(r'^\d+\.\d+\.\d+\.\d+$', part):
+                                return part
+        except:
+            pass
+        
+        return None
     
     def get_devices_from_pihole(self):
         """Get unique devices (clients) from Pi-hole's database"""
@@ -136,21 +188,70 @@ class PiholeReader:
                                 except:
                                     pass
                             
+                            # Get hostname from network table, or try to resolve
+                            hostname = row.get('hostname')
+                            if not hostname or hostname == '' or hostname == 'unknown':
+                                hostname = self.get_hostname(ip) or 'Unknown'
+                            
                             # Update or add device with better info
                             if ip in devices:
                                 devices[ip]['mac'] = row.get('mac', devices[ip].get('mac', 'unknown'))
-                                devices[ip]['hostname'] = row.get('hostname', devices[ip].get('hostname', 'Unknown'))
+                                devices[ip]['hostname'] = hostname
                             else:
                                 devices[ip] = {
                                     'ip': ip,
                                     'mac': row.get('mac', 'unknown'),
-                                    'hostname': row.get('hostname', 'Unknown'),
+                                    'hostname': hostname,
                                     'last_seen': last_seen
                                 }
                     
                     print(f"Updated {len(network_rows)} devices from network table")
             except Exception as e:
                 print(f"Could not read network table (may not exist): {e}")
+            
+            # Method 3: Try to resolve hostnames for devices without them (parallel for speed)
+            print("Resolving hostnames for devices without names...")
+            resolved_count = 0
+            
+            # Get list of IPs that need hostname resolution
+            ips_to_resolve = [ip for ip, device in devices.items() 
+                            if device.get('hostname') == 'Unknown' or not device.get('hostname')]
+            
+            if ips_to_resolve:
+                # Resolve hostnames in parallel with timeout
+                def resolve_hostname(ip):
+                    try:
+                        return self.get_hostname(ip)
+                    except:
+                        return None
+                
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                        future_to_ip = {executor.submit(resolve_hostname, ip): ip for ip in ips_to_resolve}
+                        
+                        for future in concurrent.futures.as_completed(future_to_ip, timeout=15):
+                            ip = future_to_ip[future]
+                            try:
+                                hostname = future.result(timeout=2)
+                                if hostname and hostname != 'Unknown':
+                                    devices[ip]['hostname'] = hostname
+                                    resolved_count += 1
+                            except:
+                                pass
+                except Exception as e:
+                    print(f"Error in parallel hostname resolution: {e}")
+                    # Fallback to sequential
+                    for ip in ips_to_resolve:
+                        try:
+                            hostname = self.get_hostname(ip)
+                            if hostname and hostname != 'Unknown':
+                                devices[ip]['hostname'] = hostname
+                                resolved_count += 1
+                        except:
+                            pass
+            
+            if resolved_count > 0:
+                print(f"Resolved {resolved_count} hostnames via DNS/ARP lookup")
             
             conn.close()
             
@@ -340,6 +441,11 @@ class PiholeReader:
                     
                     mac = device.get('mac', 'unknown')
                     hostname = device.get('hostname', 'Unknown')
+                    
+                    # Try to resolve hostname if still unknown
+                    if not hostname or hostname == 'Unknown':
+                        hostname = self.get_hostname(ip) or 'Unknown'
+                    
                     last_seen = device.get('last_seen', current_time)
                     
                     # Ensure last_seen is a string
