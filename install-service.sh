@@ -47,6 +47,17 @@ sed -i.bak "s|/home/pi/network-monitoring|$SCRIPT_DIR|g" "$SERVICE_FILE"
 sed -i.bak "s|User=pi|User=$SERVICE_USER|g" "$SERVICE_FILE"
 sed -i.bak "s|Group=pi|Group=$SERVICE_USER|g" "$SERVICE_FILE"
 
+# Verify virtual environment exists
+if [ ! -f "$SCRIPT_DIR/venv/bin/python3" ]; then
+    echo "⚠️  Warning: Virtual environment not found at $SCRIPT_DIR/venv"
+    echo "   Please run setup.sh first to create the virtual environment"
+    read -p "Continue anyway? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
 # Copy service file to systemd directory
 echo "📦 Installing service file..."
 cp "$SERVICE_FILE" "$SYSTEMD_DIR/network-monitoring.service"

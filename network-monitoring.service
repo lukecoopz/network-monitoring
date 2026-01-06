@@ -8,7 +8,10 @@ Type=simple
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/network-monitoring
+# Ensure virtual environment is used
 Environment="PATH=/home/pi/network-monitoring/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="VIRTUAL_ENV=/home/pi/network-monitoring/venv"
+# Use the virtual environment's Python explicitly
 ExecStart=/home/pi/network-monitoring/venv/bin/python3 /home/pi/network-monitoring/app.py
 Restart=always
 RestartSec=10
