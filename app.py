@@ -309,31 +309,31 @@ def search():
         
         # Search devices
         devices = conn.execute(
-        '''SELECT * FROM devices 
-           WHERE LOWER(hostname) LIKE ? 
-           OR LOWER(ip) LIKE ? 
-           OR LOWER(mac) LIKE ? 
-           OR LOWER(vendor) LIKE ?
-           ORDER BY last_seen DESC
-           LIMIT 20''',
-        (f'%{query}%', f'%{query}%', f'%{query}%', f'%{query}%')
-    ).fetchall()
-    results['devices'] = [dict(device) for device in devices]
-    
-    # Search sites
-    sites = conn.execute(
-        '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
-           FROM dns_queries
-           WHERE LOWER(domain) LIKE ?
-           GROUP BY domain
-           ORDER BY total_count DESC
-           LIMIT 20''',
-        (f'%{query}%',)
-    ).fetchall()
-    results['sites'] = [dict(site) for site in sites]
-    
-    conn.close()
-    return jsonify(results)
+            '''SELECT * FROM devices 
+               WHERE LOWER(hostname) LIKE ? 
+               OR LOWER(ip) LIKE ? 
+               OR LOWER(mac) LIKE ? 
+               OR LOWER(vendor) LIKE ?
+               ORDER BY last_seen DESC
+               LIMIT 20''',
+            (f'%{query}%', f'%{query}%', f'%{query}%', f'%{query}%')
+        ).fetchall()
+        results['devices'] = [dict(device) for device in devices]
+        
+        # Search sites
+        sites = conn.execute(
+            '''SELECT domain, SUM(count) as total_count, MAX(timestamp) as last_visited
+               FROM dns_queries
+               WHERE LOWER(domain) LIKE ?
+               GROUP BY domain
+               ORDER BY total_count DESC
+               LIMIT 20''',
+            (f'%{query}%',)
+        ).fetchall()
+        results['sites'] = [dict(site) for site in sites]
+        
+        conn.close()
+        return jsonify(results)
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e).lower():
             return jsonify({'error': 'Database temporarily locked, please try again'}), 503
