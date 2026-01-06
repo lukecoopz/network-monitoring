@@ -243,23 +243,23 @@ def debug_pihole():
 
 @app.route('/api/debug/force-sync', methods=['POST'])
 def force_sync():
-    """Force sync queries from Pi-hole"""
+    """Force sync all queries from Pi-hole database"""
     try:
         if not pihole.pihole_db or not pihole.pihole_db.endswith('.db'):
             return jsonify({'status': 'error', 'message': 'Pi-hole not detected'}), 400
         
-        # Force read and process queries
-        print("Force sync: Reading queries from Pi-hole...")
-        queries = pihole.read_pihole_db()
+        # Sync all queries directly from database
+        print("Force sync: Syncing all queries from Pi-hole database...")
+        success = pihole.sync_all_queries_from_pihole()
         
-        if queries:
-            print(f"Force sync: Processing {len(queries)} queries...")
-            pihole.process_queries(queries)
-            pihole.flush_to_db()
-            return jsonify({'status': 'success', 'message': f'Processed {len(queries)} queries'})
+        if success:
+            return jsonify({'status': 'success', 'message': 'All queries synced from Pi-hole database'})
         else:
-            return jsonify({'status': 'info', 'message': 'No new queries found'})
+            return jsonify({'status': 'error', 'message': 'Failed to sync queries'})
     except Exception as e:
+        print(f"Error in force sync: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/search', methods=['GET'])

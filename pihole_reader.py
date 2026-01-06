@@ -263,8 +263,136 @@ class PiholeReader:
             traceback.print_exc()
             return []
     
+    def sync_all_queries_from_pihole(self):
+        """Sync all queries from Pi-hole database directly (simpler approach)"""
+        try:
+            if not self.pihole_db or not self.pihole_db.endswith('.db'):
+                print("Pi-hole database not available")
+                return False
+            
+            print("Syncing all queries from Pi-hole database...")
+            
+            conn = sqlite3.connect(self.pihole_db, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            # Get aggregated query data directly from Pi-hole
+            # This is much simpler and more reliable
+            query = '''
+                SELECT 
+                    client as device_ip,
+                    domain,
+                    COUNT(*) as query_count,
+                    MAX(timestamp) as last_visited
+                FROM queries 
+                WHERE domain IS NOT NULL 
+                AND domain != '' 
+                AND client IS NOT NULL 
+                AND client != ''
+                AND domain NOT LIKE '%.local'
+                AND domain NOT LIKE '%.lan'
+                AND domain != 'home.arpa'
+                GROUP BY client, domain
+            '''
+            
+            c.execute(query)
+            rows = c.fetchall()
+            conn.close()
+            
+            if not rows:
+                print("No queries found in Pi-hole database")
+                return False
+            
+            print(f"Found {len(rows)} unique domain-client pairs in Pi-hole")
+            
+            # Now insert/update in monitoring database
+            monitoring_conn = sqlite3.connect(self.db_file)
+            monitoring_c = monitoring_conn.cursor()
+            current_time = datetime.now().isoformat()
+            
+            inserted_count = 0
+            updated_count = 0
+            
+            for row in rows:
+                try:
+                    device_ip = row['device_ip']
+                    domain = row['domain']
+                    query_count = row['query_count']
+                    last_visited = row['last_visited']
+                    
+                    # Convert timestamp
+                    if isinstance(last_visited, (int, float)):
+                        last_visited_iso = datetime.fromtimestamp(last_visited).isoformat()
+                    else:
+                        try:
+                            last_visited_iso = datetime.fromtimestamp(float(last_visited)).isoformat()
+                        except:
+                            last_visited_iso = current_time
+                    
+                    # Get or create device
+                    device_mac = self.get_device_mac(device_ip)
+                    if not device_mac:
+                        device_mac = f"pihole-{device_ip.replace('.', '-')}"
+                        monitoring_c.execute(
+                            '''INSERT OR IGNORE INTO devices (mac, ip, hostname, first_seen, last_seen, vendor)
+                               VALUES (?, ?, ?, ?, ?, ?)''',
+                            (device_mac, device_ip, 'Unknown', current_time, current_time, 'Pi-hole Client')
+                        )
+                    
+                    # Check if this domain already exists for this device
+                    monitoring_c.execute(
+                        '''SELECT count FROM dns_queries 
+                           WHERE device_mac = ? AND domain = ?''',
+                        (device_mac, domain)
+                    )
+                    existing = monitoring_c.fetchone()
+                    
+                    if existing:
+                        # Update existing entry - add to existing count
+                        new_count = existing[0] + query_count
+                        monitoring_c.execute(
+                            '''UPDATE dns_queries 
+                               SET count = ?, timestamp = ?
+                               WHERE device_mac = ? AND domain = ?''',
+                            (new_count, last_visited_iso, device_mac, domain)
+                        )
+                        updated_count += 1
+                    else:
+                        # Insert new entry
+                        try:
+                            monitoring_c.execute(
+                                '''INSERT INTO dns_queries (device_mac, device_ip, domain, timestamp, count)
+                                   VALUES (?, ?, ?, ?, ?)''',
+                                (device_mac, device_ip, domain, last_visited_iso, query_count)
+                            )
+                            inserted_count += 1
+                        except sqlite3.IntegrityError:
+                            # Race condition - entry was created between SELECT and INSERT
+                            monitoring_c.execute(
+                                '''UPDATE dns_queries 
+                                   SET count = count + ?, timestamp = ?
+                                   WHERE device_mac = ? AND domain = ?''',
+                                (query_count, last_visited_iso, device_mac, domain)
+                            )
+                            updated_count += 1
+                except Exception as e:
+                    print(f"Error processing query {row}: {e}")
+                    continue
+            
+            monitoring_conn.commit()
+            monitoring_conn.close()
+            
+            print(f"Synced queries: {inserted_count} inserted, {updated_count} updated")
+            return True
+            
+        except Exception as e:
+            print(f"Error syncing queries from Pi-hole: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def read_pihole_db(self):
-        """Read queries from Pi-hole's SQLite database"""
+        """Read queries from Pi-hole's SQLite database (incremental)"""
         try:
             if not self.pihole_db or not self.pihole_db.endswith('.db'):
                 return []
@@ -294,7 +422,12 @@ class PiholeReader:
                 query = '''
                     SELECT timestamp, domain, client 
                     FROM queries 
-                    WHERE timestamp > ? AND domain IS NOT NULL AND domain != '' AND client IS NOT NULL AND client != ''
+                    WHERE timestamp > ? 
+                    AND domain IS NOT NULL AND domain != '' 
+                    AND client IS NOT NULL AND client != ''
+                    AND domain NOT LIKE '%.local'
+                    AND domain NOT LIKE '%.lan'
+                    AND domain != 'home.arpa'
                     ORDER BY timestamp ASC
                     LIMIT 1000
                 '''
@@ -305,7 +438,12 @@ class PiholeReader:
                 query = '''
                     SELECT timestamp, domain, client 
                     FROM queries 
-                    WHERE timestamp > ? AND domain IS NOT NULL AND domain != '' AND client IS NOT NULL AND client != ''
+                    WHERE timestamp > ? 
+                    AND domain IS NOT NULL AND domain != '' 
+                    AND client IS NOT NULL AND client != ''
+                    AND domain NOT LIKE '%.local'
+                    AND domain NOT LIKE '%.lan'
+                    AND domain != 'home.arpa'
                     ORDER BY timestamp ASC
                     LIMIT 5000
                 '''
@@ -614,9 +752,11 @@ class PiholeReader:
                             self.flush_to_db()
                             self.last_flush = current_time
                     
-                    # Sync devices periodically (every 5 minutes)
+                    # Sync devices and queries periodically (every 5 minutes)
                     if int(time.time()) % 300 < 5 and self.pihole_db.endswith('.db'):
+                        print("Periodic sync: Updating devices and queries...")
                         self.sync_devices_from_pihole()
+                        self.sync_all_queries_from_pihole()
                     
                     # Check every 5 seconds
                     time.sleep(5)
